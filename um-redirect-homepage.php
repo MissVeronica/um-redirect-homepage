@@ -2,7 +2,7 @@
 /*
  * Plugin Name:     Ultimate Member - Redirect Homepage
  * Description:     Extension to Ultimate Member for WP redirect and WP error logging
- * Version:         1.0.0 beta
+ * Version:         1.1.0
  * Author:          Miss Veronica
  * License:         GPL v3 or later
  * License URI:     https://www.gnu.org/licenses/gpl-2.0.html
@@ -11,7 +11,7 @@
  * Update URI:      https://github.com/MissVeronica/um-redirect-homepage
  * Text Domain:     ultimate-member
  * Domain Path:     /languages
- * UM version:      2.10.5
+ * UM version:      2.10.6
 */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
@@ -19,17 +19,37 @@ if ( ! class_exists( 'UM' ) ) return;
 
 class UM_Redirect_Homepage {
 
-    public $trace_plugins = array( 'ultimate-member', 'lifterlms' );
+    public $trace_plugins = array( 'ultimate-member' );
 
     function __construct() {
 
-        add_action( 'wp_error_added',                            array( $this, 'wp_redirect_custom_log' ), 10, 3 );
-        add_filter( 'x_redirect_by',                             array( $this, 'wp_redirect_custom_log' ), 10, 3 );
-        add_filter( "um_profile_default_homepage_empty__filter", array( $this, 'um_profile_default_homepage_empty_student_fix' ), 999, 1 );
-        add_filter( "um_profile_default_homepage__filter",       array( $this, 'um_profile_default_homepage_student_fix' ), 999, 1 );
-        add_filter( 'wp_php_error_args',                         array( $this, 'wp_php_error_backtrace' ), 10, 2 );
-        add_filter( 'wp_should_handle_php_error',                array( $this, 'wp_php_error_backtrace' ), 10, 2 );
-        add_action( 'wp_trigger_error_run',                      array( $this, 'wp_trigger_error_run_backtrace' ), 10, 3 );
+        define( 'Plugin_Basename_RH', plugin_basename( __FILE__ ));
+
+        if( is_admin() && ! defined( 'DOING_AJAX' )) {
+            add_filter( 'um_settings_structure', array( $this, 'um_settings_structure' ), 10, 1 );
+            add_filter( 'plugin_action_links_' . Plugin_Basename_RH, array( $this, 'settings_link' ), 10 );
+        }
+
+        if ( UM()->options()->get( 'um_redirect_homepage_activation' ) == 1 ) {
+            add_action( 'wp_error_added',                            array( $this, 'wp_redirect_custom_log' ), 10, 3 );
+            add_filter( 'x_redirect_by',                             array( $this, 'wp_redirect_custom_log' ), 10, 3 );
+            add_filter( "um_profile_default_homepage_empty__filter", array( $this, 'um_profile_default_homepage_empty_student_fix' ), 999, 1 );
+            add_filter( "um_profile_default_homepage__filter",       array( $this, 'um_profile_default_homepage_student_fix' ), 999, 1 );
+            add_filter( 'wp_php_error_args',                         array( $this, 'wp_php_error_backtrace' ), 10, 2 );
+            add_filter( 'wp_should_handle_php_error',                array( $this, 'wp_php_error_backtrace' ), 10, 2 );
+            add_action( 'wp_trigger_error_run',                      array( $this, 'wp_trigger_error_run_backtrace' ), 10, 3 );
+
+            $plugins = array_map( 'sanitize_text_field', UM()->options()->get( 'um_redirect_homepage_plugins' ));
+            $this->trace_plugins = array_merge( $plugins, $this->trace_plugins );
+        }
+    }
+
+    public function settings_link( $links ) {
+
+        $url = get_admin_url() . 'admin.php?page=um_options&tab=access&section=other';
+        $links[] = '<a href="' . esc_url( $url ) . '">' . esc_html__( 'Settings' ) . '</a>';
+
+        return $links;
     }
 
     public function um_profile_default_homepage_empty_student_fix( $bool ) {
@@ -63,16 +83,27 @@ class UM_Redirect_Homepage {
                     }
                 }
 
-                $text    = is_array( $status ) ? implode( ', ', $status ) : $status;
                 $output  = "WP error code: {$x_redirect_by} message: {$location}";
-                $output .= empty( $text ) ? '' : " data: {$text}";
+                $status  = is_array( $status ) ? implode( ', ', $status ) : $status;
+                if ( ! is_object( $status )) {
+                    $output .= empty( $status ) ? '' : " data: {$status}";
+                } else {
+                    $output .= ' OBJECT ';
+                    global $um_html_view_function;
+	                $um_html_view_function->debug_cpu_update_profile( $status, __FUNCTION__, 'STATUS', basename( $_SERVER['PHP_SELF'] ), __line__ );
+                }
 
                 $traces = debug_backtrace( DEBUG_BACKTRACE_PROVIDE_OBJECT );
                 foreach ( $traces as $trace ) {
 
-                    if ( ! str_contains( $trace['file'], 'um-redirect-homepage' ) &&  str_contains( $trace['file'], '/plugins/' )) {
-                        $file    = explode( '/plugins/', $trace['file'] );
-                        $output .= " plugin: {$file[1]}:{$trace['line']} {$trace['function']}()";
+                    if ( isset( $trace['file'] ) && ! str_contains( $trace['file'], 'um-redirect-homepage' ) && str_contains( $trace['file'], '/plugins/' )) {
+
+                        $file = explode( '/plugins/', $trace['file'] );
+                        if ( isset( $file[1] )) {
+                            $trace['line']     = isset( $trace['line'] )     ? $trace['line'] : '';
+                            $trace['function'] = isset( $trace['function'] ) ? $trace['function'] . '(...)' : '';
+                            $output .= " plugin: {$file[1]}:{$trace['line']} {$trace['function']}";
+                        }
                         break;
                     }
                 }
@@ -91,6 +122,8 @@ class UM_Redirect_Homepage {
         $traces = debug_backtrace( DEBUG_BACKTRACE_PROVIDE_OBJECT );
         foreach ( $traces as $trace ) {
             if ( isset( $trace['file'] )) {
+                $trace['line']     = isset( $trace['line'] )     ? $trace['line'] : '';
+                $trace['function'] = isset( $trace['function'] ) ? $trace['function'] . '(...)' : '';
                 $output .= "{$trace['file']}:{$trace['line']} {$trace['function']}" . chr(13);
             }
         }
@@ -112,7 +145,7 @@ class UM_Redirect_Homepage {
 
         foreach ( $traces as $trace ) {
 
-            if( isset( $trace['file'] ) && strpos( $trace['file'], '/plugins/' ) > 0 ) {
+            if( isset( $trace['file'] ) && str_contains( $trace['file'], '/plugins/' )) {
 
                 $file   = explode( '/plugins/', $trace['file'] );
                 $plugin = explode( '/', $file[1] );
@@ -129,15 +162,7 @@ class UM_Redirect_Homepage {
                                 }
 
                                 if ( is_array( $arg )) {
-
-                                    $multi_dim = false;
-                                    foreach( $arg as $value ) {
-                                        if ( is_array( $value )) {
-                                            $multi_dim = true;
-                                        }
-                                    }
-
-                                    $arg = ! $multi_dim ? implode( ', ', $arg ) : '';
+                                    $arg = ! $this->multi_dim_array( $arg ) ? implode( ', ', $arg ) : '...';
                                 }
                             }
 
@@ -191,26 +216,26 @@ class UM_Redirect_Homepage {
         if ( is_array( $array )) {
             if ( ! empty( $array )) {
 
-                if ( is_numeric( array_key_first( $array )) &&  is_numeric( array_key_last( $array ))) {
-                    return " {$message}: " . implode( ',', $array ); 
+                if ( is_numeric( array_key_first( $array )) && is_numeric( array_key_last( $array ))) {
+                    return " {$message}: " . implode( ',', $array );
                 }
 
                 $req = array();
                 foreach( $array as $key => $arg ) {
 
                     if ( is_array( $arg )) {
-                        $arg = '(' . implode( ',', $arg ) . ')';
+                        $arg = '(' . ( ! $this->multi_dim_array( $arg ) ? implode( ',', $arg ) : '...' ) . ')';
                     }
 
                     $req[] = $key . '=>' . $arg;
                 }
 
-                return " {$message}: " . implode( ',', $req );
+                return " {$message}: " . ( ! $this->multi_dim_array( $req ) ? implode( ',', $req ) : '...' );
             }
 
         } else {
 
-            if ( ! empty( $array )) { 
+            if ( ! empty( $array )) {
                 return " {$message}: " . $array;
             }
         }
@@ -218,8 +243,66 @@ class UM_Redirect_Homepage {
         return '';
     }
 
+    public function multi_dim_array( $arg ) {
 
+        $multi_dim = false;
+        foreach( $arg as $value ) {
+            if ( is_array( $value )) {
+                $multi_dim = true;
+            }
+        }
+
+        return $multi_dim;
+    }
+
+    public function um_settings_structure( $settings_structure ) {
+
+        $plugins        = get_plugins();
+        $active_plugins = get_option( 'active_plugins', array() );
+        $plugin_list    = array();
+
+        foreach ( $active_plugins as $plugin_path ) {
+
+            $folder = explode( '/', $plugin_path );
+            if ( isset( $folder[0] )) {
+                if ( substr( $folder[0], 0, 3 ) == 'um-' || in_array( $folder[0], array( 'ultimate-member' ))) {
+                    continue;
+                }
+
+                if ( isset( $plugins[$plugin_path]['Name'] )) {
+                    $plugin_list[$folder[0]] = $plugins[$plugin_path]['Name'];
+                }
+            }
+        }
+
+        asort( $plugin_list );
+        $prefix = '&nbsp; * &nbsp;';
+        $plugin_data = get_plugin_data( __FILE__ );
+
+        $settings_structure['access']['sections']['other']['form_sections']['redirect_homepage']['title']       = esc_html__( 'Redirect Homepage', 'ultimate-member' );
+        $settings_structure['access']['sections']['other']['form_sections']['redirect_homepage']['description'] = sprintf( esc_html__( 'Plugin version %s - tested with UM 2.10.6', 'ultimate-member' ), $plugin_data['Version'] );
+
+        $settings_structure['access']['sections']['other']['form_sections']['redirect_homepage']['fields'][] = array(
+                        'id'             => 'um_redirect_homepage_activation',
+                        'type'           => 'checkbox',
+                        'label'          => $prefix . esc_html__( 'Activate ', 'ultimate-member' ),
+                        'checkbox_label' => esc_html__( 'Click to activate the Redirect Homepage plugin.', 'ultimate-member' ),
+                    );
+
+        $settings_structure['access']['sections']['other']['form_sections']['redirect_homepage']['fields'][] = array(
+                        'id'             => 'um_redirect_homepage_plugins',
+                        'type'           => 'select',
+                        'multi'          => true,
+                        'options'        => $plugin_list,
+                        'label'          => $prefix . esc_html__( 'Active Plugins to include', 'ultimate-member' ),
+                        'description'    => esc_html__( 'Select single or multiple Plugins for tracing of stack calls. Ultimate Member and the UM extensions are always included.', 'ultimate-member' ),
+                        'conditional'    => array( 'um_redirect_homepage_activation', '=', 1 ),
+                    );
+
+        return $settings_structure;
+    }
 }
 
 new UM_Redirect_Homepage();
+
 
