@@ -89,8 +89,6 @@ class UM_Redirect_Homepage {
                     $output .= empty( $status ) ? '' : " data: {$status}";
                 } else {
                     $output .= ' OBJECT ';
-                    global $um_html_view_function;
-	                $um_html_view_function->debug_cpu_update_profile( $status, __FUNCTION__, 'STATUS', basename( $_SERVER['PHP_SELF'] ), __line__ );
                 }
 
                 $traces = debug_backtrace( DEBUG_BACKTRACE_PROVIDE_OBJECT );
